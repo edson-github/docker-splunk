@@ -30,7 +30,15 @@ REPO_DIR = os.path.join(FILE_DIR, "..")
 # Setup logging
 LOGGER = logging.getLogger("docker-splunk")
 LOGGER.setLevel(logging.INFO)
-file_handler = logging.handlers.RotatingFileHandler(os.path.join(FILE_DIR, "..", "test-results", "docker_splunk_test_python{}.log".format(sys.version_info[0])), maxBytes=25000000)
+file_handler = logging.handlers.RotatingFileHandler(
+    os.path.join(
+        FILE_DIR,
+        "..",
+        "test-results",
+        f"docker_splunk_test_python{sys.version_info[0]}.log",
+    ),
+    maxBytes=25000000,
+)
 formatter = logging.Formatter('%(asctime)s %(levelname)s [%(name)s] [%(process)d] %(message)s')
 file_handler.setFormatter(formatter)
 LOGGER.addHandler(file_handler)
@@ -59,9 +67,9 @@ class Executor(object):
     def setup_class(cls, platform):
         cls.client = docker.APIClient()
         # Define images by name to be validated
-        cls.BASE_IMAGE_NAME = "base-{}".format(platform)
-        cls.SPLUNK_IMAGE_NAME = "splunk-{}".format(platform)
-        cls.UF_IMAGE_NAME = "uf-{}".format(platform)
+        cls.BASE_IMAGE_NAME = f"base-{platform}"
+        cls.SPLUNK_IMAGE_NAME = f"splunk-{platform}"
+        cls.UF_IMAGE_NAME = f"uf-{platform}"
         # Define new, random password for each executor
         cls.password = Executor.generate_random_string()
         cls.compose_file_name = None
@@ -81,17 +89,19 @@ class Executor(object):
 
     @staticmethod
     def generate_random_string():
-        return ''.join(choice(ascii_lowercase) for b in range(10))
+        return ''.join(choice(ascii_lowercase) for _ in range(10))
 
     def handle_request_retry(self, method, url, kwargs):
         for n in range(Executor.RETRY_COUNT):
             try:
-                self.logger.info("Attempt #{}: running {} against {} with kwargs {}".format(n+1, method, url, kwargs))
+                self.logger.info(
+                    f"Attempt #{n + 1}: running {method} against {url} with kwargs {kwargs}"
+                )
                 resp = requests.request(method, url, **kwargs)
                 resp.raise_for_status()
                 return resp.status_code, resp.content
             except Exception as e:
-                self.logger.error("Attempt #{} error: {}".format(n+1, str(e)))
+                self.logger.error(f"Attempt #{n + 1} error: {str(e)}")
                 if n < Executor.RETRY_COUNT-1:
                     time.sleep(Executor.RETRY_DELAY)
                     continue
@@ -117,7 +127,9 @@ class Executor(object):
 
     def _clean_docker_env(self):
         # Remove anything spun up by docker-compose
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         for container in containers:
             self.client.remove_container(container["Id"], v=True, force=True)
         try:
@@ -132,15 +144,16 @@ class Executor(object):
         '''
         start = time.time()
         end = start
-        # Wait
-        while end-start < timeout:
+        while end - end < timeout:
             filters = {}
             if name:
                 filters["name"] = name
             if label:
                 filters["label"] = label
             containers = self.client.containers(filters=filters)
-            self.logger.info("Found {} containers, expected {}: {}".format(len(containers), count, [x["Names"][0] for x in containers]))
+            self.logger.info(
+                f'Found {len(containers)} containers, expected {count}: {[x["Names"][0] for x in containers]}'
+            )
             if len(containers) != count:
                 return False
             healthy_count = 0
@@ -149,12 +162,14 @@ class Executor(object):
                 if container.get("Labels", {}).get("maintainer") == "support@splunk.com":
                     output = self.client.logs(container["Id"], tail=5)
                     if "unable to" in output or "denied" in output or "splunkd.pid file is unreadable" in output:
-                        self.logger.error("Container {} did not start properly, last log line: {}".format(container["Names"][0], output))
+                        self.logger.error(
+                            f'Container {container["Names"][0]} did not start properly, last log line: {output}'
+                        )
                     elif "Ansible playbook complete" in output:
-                        self.logger.info("Container {} is ready".format(container["Names"][0]))
+                        self.logger.info(f'Container {container["Names"][0]} is ready')
                         healthy_count += 1
                 else:
-                    self.logger.info("Container {} is ready".format(container["Names"][0]))
+                    self.logger.info(f'Container {container["Names"][0]} is ready')
                     healthy_count += 1
             if healthy_count == count:
                 self.logger.info("All containers ready to proceed")
@@ -171,14 +186,14 @@ class Executor(object):
         if name:
             filters["name"] = name
         if self.project_name:
-            filters["label"] = "com.docker.compose.project={}".format(self.project_name)
+            filters["label"] = f"com.docker.compose.project={self.project_name}"
         containers = self.client.containers(filters=filters)
         for container in containers:
             # We can't check splunkd on non-Splunk containers
             if "maintainer" not in container["Labels"] or container["Labels"]["maintainer"] != "support@splunk.com":
                 continue
             splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
-            url = "{}://localhost:{}/services/server/info".format(scheme, splunkd_port)
+            url = f"{scheme}://localhost:{splunkd_port}/services/server/info"
             kwargs = {"auth": (username, password), "verify": False}
             status, content = self.handle_request_retry("GET", url, kwargs)
             assert status == 200
@@ -186,20 +201,20 @@ class Executor(object):
 
     def _run_splunk_query(self, container_id, query, username="admin", password="password"):
         splunkd_port = self.client.port(container_id, 8089)[0]["HostPort"]
-        url = "https://localhost:{}/services/search/jobs?output_mode=json".format(splunkd_port)
+        url = f"https://localhost:{splunkd_port}/services/search/jobs?output_mode=json"
         kwargs = {
-                    "auth": (username, password),
-                    "data": "search={}".format(urllib.quote_plus(query)),
-                    "verify": False
-                }
+            "auth": (username, password),
+            "data": f"search={urllib.quote_plus(query)}",
+            "verify": False,
+        }
         resp = requests.post(url, **kwargs)
         assert resp.status_code == 201
         sid = json.loads(resp.content)["sid"]
         assert sid
-        self.logger.info("Search job {} created against on {}".format(sid, container_id))
+        self.logger.info(f"Search job {sid} created against on {container_id}")
         # Wait for search to finish
         job_status = None
-        url = "https://localhost:{}/services/search/jobs/{}?output_mode=json".format(splunkd_port, sid)
+        url = f"https://localhost:{splunkd_port}/services/search/jobs/{sid}?output_mode=json"
         kwargs = {
                     "auth": (username, password), 
                     "verify": False
@@ -207,7 +222,7 @@ class Executor(object):
         for _ in range(10):
             job_status = requests.get(url, **kwargs)
             done = json.loads(job_status.content)["entry"][0]["content"]["isDone"]
-            self.logger.info("Search job {} done status is {}".format(sid, done))
+            self.logger.info(f"Search job {sid} done status is {done}")
             if done:
                 break
             time.sleep(3)
@@ -215,7 +230,7 @@ class Executor(object):
         # Get job metadata
         job_metadata = json.loads(job_status.content)
         # Check search results
-        url = "https://localhost:{}/services/search/jobs/{}/results?output_mode=json".format(splunkd_port, sid)
+        url = f"https://localhost:{splunkd_port}/services/search/jobs/{sid}/results?output_mode=json"
         job_results = requests.get(url, **kwargs)
         assert job_results.status_code == 200
         job_results = json.loads(job_results.content)
@@ -223,13 +238,13 @@ class Executor(object):
 
     def compose_up(self, defaults_url=None, apps_url=None):
         container_count = self.get_number_of_containers(os.path.join(self.SCENARIOS_DIR, self.compose_file_name))
-        command = "docker-compose -p {} -f test_scenarios/{} up -d".format(self.project_name, self.compose_file_name)
+        command = f"docker-compose -p {self.project_name} -f test_scenarios/{self.compose_file_name} up -d"
         out, err, rc = self._run_command(command, defaults_url, apps_url)
         return container_count, rc
 
     def extract_json(self, container_name):
         retries = 15
-        for i in range(retries):
+        for _ in range(retries):
             exec_command = self.client.exec_create(container_name, "cat /opt/container_artifact/ansible_inventory.json")
             json_data = self.client.exec_start(exec_command)
             if "No such file or directory" in json_data:
@@ -237,8 +252,7 @@ class Executor(object):
             else: 
                 break
         try:
-            data = json.loads(json_data)
-            return data
+            return json.loads(json_data)
         except Exception as e:
             self.logger.error(e)
             return None
@@ -261,7 +275,7 @@ class Executor(object):
             sh = command
         elif isinstance(command, str):
             sh = shlex.split(command)
-        self.logger.info("CALL: %s" % sh)
+        self.logger.info(f"CALL: {sh}")
         env = os.environ.copy()
         env["SPLUNK_PASSWORD"] = self.password
         env["SPLUNK_IMAGE"] = self.SPLUNK_IMAGE_NAME
@@ -271,20 +285,16 @@ class Executor(object):
         if apps_url:
             env["SPLUNK_APPS_URL"] = apps_url
         proc = subprocess.Popen(sh, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
-        lines = []
-        err_lines = []
-        for line in iter(proc.stdout.readline, ''):
-            lines.append(line)
-        for line in iter(proc.stderr.readline, ''):
-            err_lines.append(line)
+        lines = list(iter(proc.stdout.readline, ''))
+        err_lines = list(iter(proc.stderr.readline, ''))
         proc.stdout.close()
         proc.stderr.close()
         proc.wait()
         out = "".join(lines)
-        self.logger.info("STDOUT: %s" % out)
+        self.logger.info(f"STDOUT: {out}")
         err = "".join(err_lines)
-        self.logger.info("STDERR: %s" % err)
-        self.logger.info("RC: %s" % proc.returncode)
+        self.logger.info(f"STDERR: {err}")
+        self.logger.info(f"RC: {proc.returncode}")
         return out, err, proc.returncode
 
     def check_common_keys(self, log_output, role):
@@ -321,7 +331,7 @@ class Executor(object):
                 elif role == "cm":
                     assert log_output["all"]["vars"]["splunk"]["role"] == "splunk_cluster_master"
         except KeyError as e:
-            self.logger.error("{} key not found".format(e))
+            self.logger.error(f"{e} key not found")
             assert False
 
     def check_ansible(self, output):
@@ -334,20 +344,29 @@ class Executor(object):
             splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
             if container_name == "dmc":
                 # check 1: curl -k https://localhost:8089/servicesNS/nobody/splunk_monitoring_console/configs/conf-splunk_monitoring_console_assets/settings?output_mode=json -u admin:helloworld
-                status, content = self.handle_request_retry("GET", "https://localhost:{}/servicesNS/nobody/splunk_monitoring_console/configs/conf-splunk_monitoring_console_assets/settings?output_mode=json".format(splunkd_port), 
-                                                            {"auth": ("admin", self.password), "verify": False})
+                status, content = self.handle_request_retry(
+                    "GET",
+                    f"https://localhost:{splunkd_port}/servicesNS/nobody/splunk_monitoring_console/configs/conf-splunk_monitoring_console_assets/settings?output_mode=json",
+                    {"auth": ("admin", self.password), "verify": False},
+                )
                 assert status == 200
                 output = json.loads(content)
                 assert output["entry"][0]["content"]["disabled"] == False
                 # check 2: curl -k https://localhost:8089/servicesNS/nobody/system/apps/local/splunk_monitoring_console?output_mode=json -u admin:helloworld
-                status, content = self.handle_request_retry("GET", "https://localhost:{}/servicesNS/nobody/system/apps/local/splunk_monitoring_console?output_mode=json".format(splunkd_port), 
-                                                            {"auth": ("admin", self.password), "verify": False})
+                status, content = self.handle_request_retry(
+                    "GET",
+                    f"https://localhost:{splunkd_port}/servicesNS/nobody/system/apps/local/splunk_monitoring_console?output_mode=json",
+                    {"auth": ("admin", self.password), "verify": False},
+                )
                 assert status == 200
                 output = json.loads(content)
                 assert output["entry"][0]["content"]["disabled"] == False
                 # check 3: curl -k https://localhost:8089/services/search/distributed/peers?output_mode=json -u admin:helloworld
-                status, content = self.handle_request_retry("GET", "https://localhost:{}/services/search/distributed/peers?output_mode=json".format(splunkd_port),
-                                                            {"auth": ("admin", self.password), "verify": False})
+                status, content = self.handle_request_retry(
+                    "GET",
+                    f"https://localhost:{splunkd_port}/services/search/distributed/peers?output_mode=json",
+                    {"auth": ("admin", self.password), "verify": False},
+                )
                 assert status == 200
                 output = json.loads(content)
                 assert num_peers == len(output["entry"])
@@ -357,26 +376,38 @@ class Executor(object):
 
     def check_dmc_groups(self, splunkd_port, num_idx, num_sh, num_cm, num_lm):
         # check dmc_group_indexer
-        status, content = self.handle_request_retry("GET", "https://localhost:{}/services/search/distributed/groups/dmc_group_indexer?output_mode=json".format(splunkd_port), 
-                                                    {"auth": ("admin", self.password), "verify": False})
+        status, content = self.handle_request_retry(
+            "GET",
+            f"https://localhost:{splunkd_port}/services/search/distributed/groups/dmc_group_indexer?output_mode=json",
+            {"auth": ("admin", self.password), "verify": False},
+        )
         assert status == 200
         output = json.loads(content)
         assert len(output["entry"][0]["content"]["member"]) == num_idx
         # check dmc_group_cluster_master
-        status, content = self.handle_request_retry("GET", "https://localhost:{}/services/search/distributed/groups/dmc_group_cluster_master?output_mode=json".format(splunkd_port), 
-                                                    {"auth": ("admin", self.password), "verify": False})
+        status, content = self.handle_request_retry(
+            "GET",
+            f"https://localhost:{splunkd_port}/services/search/distributed/groups/dmc_group_cluster_master?output_mode=json",
+            {"auth": ("admin", self.password), "verify": False},
+        )
         assert status == 200
         output = json.loads(content)
         assert len(output["entry"][0]["content"]["member"]) == num_cm
         # check dmc_group_license_master
-        status, content = self.handle_request_retry("GET", "https://localhost:{}/services/search/distributed/groups/dmc_group_license_master?output_mode=json".format(splunkd_port), 
-                                                    {"auth": ("admin", self.password), "verify": False})
+        status, content = self.handle_request_retry(
+            "GET",
+            f"https://localhost:{splunkd_port}/services/search/distributed/groups/dmc_group_license_master?output_mode=json",
+            {"auth": ("admin", self.password), "verify": False},
+        )
         assert status == 200
         output = json.loads(content)
         assert len(output["entry"][0]["content"]["member"]) == num_lm
         # check dmc_group_search_head
-        status, content = self.handle_request_retry("GET", "https://localhost:{}/services/search/distributed/groups/dmc_group_search_head?output_mode=json".format(splunkd_port), 
-                                                    {"auth": ("admin", self.password), "verify": False})
+        status, content = self.handle_request_retry(
+            "GET",
+            f"https://localhost:{splunkd_port}/services/search/distributed/groups/dmc_group_search_head?output_mode=json",
+            {"auth": ("admin", self.password), "verify": False},
+        )
         assert status == 200
         output = json.loads(content)
         assert len(output["entry"][0]["content"]["member"]) == num_sh

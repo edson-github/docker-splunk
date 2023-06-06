@@ -49,9 +49,9 @@ class TestDockerSplunk(Executor):
     def teardown_method(self, method):
         if self.compose_file_name and self.project_name:
             if self.DIR:
-                command = "docker-compose -p {} -f {} down --volumes --remove-orphans".format(self.project_name, os.path.join(self.DIR, self.compose_file_name))
+                command = f"docker-compose -p {self.project_name} -f {os.path.join(self.DIR, self.compose_file_name)} down --volumes --remove-orphans"
             else:
-                command = "docker-compose -p {} -f test_scenarios/{} down --volumes --remove-orphans".format(self.project_name, self.compose_file_name)
+                command = f"docker-compose -p {self.project_name} -f test_scenarios/{self.compose_file_name} down --volumes --remove-orphans"
             out, err, rc = self._run_command(command)
             self._clean_docker_env()
         if self.DIR:
@@ -69,30 +69,38 @@ class TestDockerSplunk(Executor):
         output = self.get_container_logs(cid.get("Id"))
         self.client.remove_container(cid.get("Id"), v=True, force=True)
         # Get the password
-        password = re.search(r"^  password: (.*?)\n", output, flags=re.MULTILINE|re.DOTALL).group(1).strip()
+        password = re.search(
+            r"^  password: (.*?)\n", output, flags=re.MULTILINE | re.DOTALL
+        )[1].strip()
         assert password and password != "null"
         # Change repl factor & search factor
         output = re.sub(r'    replication_factor: 3', r'''    replication_factor: 2''', output)
         output = re.sub(r'    search_factor: 3', r'''    search_factor: 1''', output)
         # Write the default.yml to a file
-        with open(os.path.join(self.SCENARIOS_DIR, "defaults", "{}.yml".format(self.project_name)), "w") as f:
+        with open(os.path.join(self.SCENARIOS_DIR, "defaults", f"{self.project_name}.yml"), "w") as f:
             f.write(output)
         # Standup deployment
         try:
             self.compose_file_name = "3idx1cm.yaml"
-            container_count, rc = self.compose_up(defaults_url="/tmp/defaults/{}.yml".format(self.project_name))
+            container_count, rc = self.compose_up(
+                defaults_url=f"/tmp/defaults/{self.project_name}.yml"
+            )
             assert rc == 0
             # Wait for containers to come up
-            assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name), timeout=600)
+            assert self.wait_for_containers(
+                container_count,
+                label=f"com.docker.compose.project={self.project_name}",
+                timeout=600,
+            )
             # Get container logs
             container_mapping = {"cm1": "cm", "idx1": "idx", "idx2": "idx", "idx3": "idx"}
-            for container in container_mapping:
+            for container, value in container_mapping.items():
                 # Check ansible version & configs
-                ansible_logs = self.get_container_logs("{}_{}_1".format(self.project_name, container))
+                ansible_logs = self.get_container_logs(f"{self.project_name}_{container}_1")
                 self.check_ansible(ansible_logs)
                 # Check values in log output
-                inventory_json = self.extract_json("{}_{}_1".format(self.project_name, container))
-                self.check_common_keys(inventory_json, container_mapping[container])
+                inventory_json = self.extract_json(f"{self.project_name}_{container}_1")
+                self.check_common_keys(inventory_json, value)
                 try:
                     assert inventory_json["splunk_indexer"]["hosts"] == ["idx1", "idx2", "idx3"]
                     assert inventory_json["splunk_cluster_master"]["hosts"] == ["cm1"]
@@ -102,14 +110,18 @@ class TestDockerSplunk(Executor):
             # Check Splunkd on all the containers
             assert self.check_splunkd("admin", self.password)
             # Make sure apps are installed, and shcluster is setup properly
-            containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+            containers = self.client.containers(
+                filters={
+                    "label": f"com.docker.compose.project={self.project_name}"
+                }
+            )
             assert len(containers) == 4
             for container in containers:
                 container_name = container["Names"][0].strip("/").split("_")[1]
                 splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
                 if container_name == "cm1":
                     # Check the replication factor & search factor
-                    url = "https://localhost:{}/services/cluster/config/config?output_mode=json".format(splunkd_port)
+                    url = f"https://localhost:{splunkd_port}/services/cluster/config/config?output_mode=json"
                     kwargs = {"auth": ("admin", self.password), "verify": False}
                     status, content = self.handle_request_retry("GET", url, kwargs)
                     assert status == 200
@@ -120,7 +132,11 @@ class TestDockerSplunk(Executor):
             raise e
         finally:
             try:
-                os.remove(os.path.join(self.SCENARIOS_DIR, "defaults", "{}.yml".format(self.project_name)))
+                os.remove(
+                    os.path.join(
+                        self.SCENARIOS_DIR, "defaults", f"{self.project_name}.yml"
+                    )
+                )
             except OSError as e:
                 pass
 
@@ -132,30 +148,39 @@ class TestDockerSplunk(Executor):
         output = self.get_container_logs(cid.get("Id"))
         self.client.remove_container(cid.get("Id"), v=True, force=True)
         # Get the password
-        password = re.search(r"^  password: (.*?)\n", output, flags=re.MULTILINE|re.DOTALL).group(1).strip()
+        password = re.search(
+            r"^  password: (.*?)\n", output, flags=re.MULTILINE | re.DOTALL
+        )[1].strip()
         assert password and password != "null"
         # Write the default.yml to a file
-        with open(os.path.join(self.SCENARIOS_DIR, "defaults", "{}.yml".format(self.project_name)), "w") as f:
+        with open(os.path.join(self.SCENARIOS_DIR, "defaults", f"{self.project_name}.yml"), "w") as f:
             f.write(output)
         # Tar the app before spinning up the scenario
-        with tarfile.open(os.path.join(self.FIXTURES_DIR, "{}.tgz".format(self.project_name)), "w:gz") as tar:
+        with tarfile.open(os.path.join(self.FIXTURES_DIR, f"{self.project_name}.tgz"), "w:gz") as tar:
             tar.add(self.EXAMPLE_APP, arcname=os.path.basename(self.EXAMPLE_APP))
         # Standup deployment
         try:
             self.compose_file_name = "1idx3sh1cm1dep.yaml"
-            container_count, rc = self.compose_up(defaults_url="/tmp/defaults/{}.yml".format(self.project_name), apps_url="http://appserver/{}.tgz".format(self.project_name))
+            container_count, rc = self.compose_up(
+                defaults_url=f"/tmp/defaults/{self.project_name}.yml",
+                apps_url=f"http://appserver/{self.project_name}.tgz",
+            )
             assert rc == 0
             # Wait for containers to come up
-            assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name), timeout=600)
+            assert self.wait_for_containers(
+                container_count,
+                label=f"com.docker.compose.project={self.project_name}",
+                timeout=600,
+            )
             # Get container logs
             container_mapping = {"sh1": "sh", "sh2": "sh", "sh3": "sh", "cm1": "cm", "idx1": "idx", "dep1": "dep"}
-            for container in container_mapping:
+            for container, value in container_mapping.items():
                 # Check ansible version & configs
-                ansible_logs = self.get_container_logs("{}_{}_1".format(self.project_name, container))
+                ansible_logs = self.get_container_logs(f"{self.project_name}_{container}_1")
                 self.check_ansible(ansible_logs)
                 # Check values in log output
-                inventory_json = self.extract_json("{}_{}_1".format(self.project_name, container))
-                self.check_common_keys(inventory_json, container_mapping[container])
+                inventory_json = self.extract_json(f"{self.project_name}_{container}_1")
+                self.check_common_keys(inventory_json, value)
                 try:
                     assert inventory_json["splunk_indexer"]["hosts"] == ["idx1"]
                     assert inventory_json["splunk_search_head_captain"]["hosts"] == ["sh1"]
@@ -168,7 +193,11 @@ class TestDockerSplunk(Executor):
             # Check Splunkd on all the containers
             assert self.check_splunkd("admin", self.password)
             # Make sure apps are installed, and shcluster is setup properly
-            containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+            containers = self.client.containers(
+                filters={
+                    "label": f"com.docker.compose.project={self.project_name}"
+                }
+            )
             assert len(containers) == 7
             for container in containers:
                 # Skip the nginx container
@@ -178,14 +207,14 @@ class TestDockerSplunk(Executor):
                 splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
                 if container_name in {"sh1", "sh2", "sh3", "idx1"}:
                     # Check the app and version
-                    url = "https://localhost:{}/servicesNS/nobody/splunk_app_example/configs/conf-app/launcher?output_mode=json".format(splunkd_port)
+                    url = f"https://localhost:{splunkd_port}/servicesNS/nobody/splunk_app_example/configs/conf-app/launcher?output_mode=json"
                     kwargs = {"auth": ("admin", self.password), "verify": False}
                     status, content = self.handle_request_retry("GET", url, kwargs)
                     assert status == 200
                     assert json.loads(content)["entry"][0]["content"]["version"] == "0.0.1"
                 # Make sure preferred captain is set
                 if container_name == "sh1":
-                    url = "https://localhost:{}/servicesNS/nobody/system/configs/conf-server/shclustering?output_mode=json".format(splunkd_port)
+                    url = f"https://localhost:{splunkd_port}/servicesNS/nobody/system/configs/conf-server/shclustering?output_mode=json"
                     kwargs = {"auth": ("admin", self.password), "verify": False}
                     status, content = self.handle_request_retry("GET", url, kwargs)
                     assert json.loads(content)["entry"][0]["content"]["preferred_captain"] == "1"
@@ -195,14 +224,19 @@ class TestDockerSplunk(Executor):
             IMPLICIT_WAIT = 6
             for n in range(RETRIES):
                 try:
-                    self.logger.info("Attempt #{}: checking internal search host count".format(n+1))
-                    search_providers, distinct_hosts = self.search_internal_distinct_hosts("{}_sh1_1".format(self.project_name), password=self.password)
+                    self.logger.info(f"Attempt #{n + 1}: checking internal search host count")
+                    (
+                        search_providers,
+                        distinct_hosts,
+                    ) = self.search_internal_distinct_hosts(
+                        f"{self.project_name}_sh1_1", password=self.password
+                    )
                     assert len(search_providers) == 2
                     assert "idx1" in search_providers and "sh1" in search_providers
                     assert distinct_hosts == 6
                     break
                 except Exception as e:
-                    self.logger.error("Attempt #{} error: {}".format(n+1, str(e)))
+                    self.logger.error(f"Attempt #{n + 1} error: {str(e)}")
                     if n < RETRIES-1:
                         time.sleep(IMPLICIT_WAIT)
                         continue
@@ -212,8 +246,12 @@ class TestDockerSplunk(Executor):
             raise e
         finally:
             try:
-                os.remove(os.path.join(self.SCENARIOS_DIR, "defaults", "{}.yml".format(self.project_name)))
-                os.remove(os.path.join(self.FIXTURES_DIR, "{}.tgz".format(self.project_name)))
+                os.remove(
+                    os.path.join(
+                        self.SCENARIOS_DIR, "defaults", f"{self.project_name}.yml"
+                    )
+                )
+                os.remove(os.path.join(self.FIXTURES_DIR, f"{self.project_name}.tgz"))
             except OSError as e:
                 pass
 
@@ -224,16 +262,19 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
         # Get container logs
         container_mapping = {"so1": "so", "uf1": "uf"}
-        for container in container_mapping:
+        for container, value in container_mapping.items():
             # Check ansible version & configs
-            ansible_logs = self.get_container_logs("{}_{}_1".format(self.project_name, container))
+            ansible_logs = self.get_container_logs(f"{self.project_name}_{container}_1")
             self.check_ansible(ansible_logs)
             # Check values in log output
-            inventory_json = self.extract_json("{}_{}_1".format(self.project_name, container))
-            self.check_common_keys(inventory_json, container_mapping[container])
+            inventory_json = self.extract_json(f"{self.project_name}_{container}_1")
+            self.check_common_keys(inventory_json, value)
             try:
                 assert inventory_json["splunk_standalone"]["hosts"] == ["so1"]
             except KeyError as e:
@@ -241,7 +282,9 @@ class TestDockerSplunk(Executor):
                 raise e
         # Search results won't return the correct results immediately :(
         time.sleep(30)
-        search_providers, distinct_hosts = self.search_internal_distinct_hosts("{}_so1_1".format(self.project_name), password=self.password)
+        search_providers, distinct_hosts = self.search_internal_distinct_hosts(
+            f"{self.project_name}_so1_1", password=self.password
+        )
         assert len(search_providers) == 1
         assert search_providers[0] == "so1"
         assert distinct_hosts == 2
@@ -254,27 +297,35 @@ class TestDockerSplunk(Executor):
         output = self.get_container_logs(cid.get("Id"))
         self.client.remove_container(cid.get("Id"), v=True, force=True)
         # Get the password
-        password = re.search(r"^  password: (.*?)\n", output, flags=re.MULTILINE|re.DOTALL).group(1).strip()
+        password = re.search(
+            r"^  password: (.*?)\n", output, flags=re.MULTILINE | re.DOTALL
+        )[1].strip()
         assert password and password != "null"
         # Write the default.yml to a file
-        with open(os.path.join(self.SCENARIOS_DIR, "defaults", "{}.yml".format(self.project_name)), "w") as f:
+        with open(os.path.join(self.SCENARIOS_DIR, "defaults", f"{self.project_name}.yml"), "w") as f:
             f.write(output)
         # Standup deployment
         try:
             self.compose_file_name = "3idx1cm.yaml"
-            container_count, rc = self.compose_up(defaults_url="/tmp/defaults/{}.yml".format(self.project_name))
+            container_count, rc = self.compose_up(
+                defaults_url=f"/tmp/defaults/{self.project_name}.yml"
+            )
             assert rc == 0
             # Wait for containers to come up
-            assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name), timeout=600)
+            assert self.wait_for_containers(
+                container_count,
+                label=f"com.docker.compose.project={self.project_name}",
+                timeout=600,
+            )
             # Get container logs
             container_mapping = {"cm1": "cm", "idx1": "idx", "idx2": "idx", "idx3": "idx"}
-            for container in container_mapping:
+            for container, value in container_mapping.items():
                 # Check ansible version & configs
-                ansible_logs = self.get_container_logs("{}_{}_1".format(self.project_name, container))
+                ansible_logs = self.get_container_logs(f"{self.project_name}_{container}_1")
                 self.check_ansible(ansible_logs)
                 # Check values in log output
-                inventory_json = self.extract_json("{}_{}_1".format(self.project_name, container))
-                self.check_common_keys(inventory_json, container_mapping[container])
+                inventory_json = self.extract_json(f"{self.project_name}_{container}_1")
+                self.check_common_keys(inventory_json, value)
                 try:
                     assert inventory_json["splunk_indexer"]["hosts"] == ["idx1", "idx2", "idx3"]
                     assert inventory_json["splunk_cluster_master"]["hosts"] == ["cm1"]
@@ -284,14 +335,18 @@ class TestDockerSplunk(Executor):
             # Check Splunkd on all the containers
             assert self.check_splunkd("admin", self.password)
             # Make sure apps are installed, and shcluster is setup properly
-            containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+            containers = self.client.containers(
+                filters={
+                    "label": f"com.docker.compose.project={self.project_name}"
+                }
+            )
             assert len(containers) == 4
             for container in containers:
                 container_name = container["Names"][0].strip("/").split("_")[1]
                 splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
                 if container_name == "cm1":
                     # Check the replication factor & search factor
-                    url = "https://localhost:{}/services/cluster/config/config?output_mode=json".format(splunkd_port)
+                    url = f"https://localhost:{splunkd_port}/services/cluster/config/config?output_mode=json"
                     kwargs = {"auth": ("admin", self.password), "verify": False}
                     status, content = self.handle_request_retry("GET", url, kwargs)
                     assert status == 200
@@ -302,7 +357,11 @@ class TestDockerSplunk(Executor):
             raise e
         finally:
             try:
-                os.remove(os.path.join(self.SCENARIOS_DIR, "defaults", "{}.yml".format(self.project_name)))
+                os.remove(
+                    os.path.join(
+                        self.SCENARIOS_DIR, "defaults", f"{self.project_name}.yml"
+                    )
+                )
             except OSError as e:
                 pass
 
@@ -313,26 +372,34 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
         # Get container logs
         container_mapping = {"so1": "so", "cm1": "cm"}
-        for container in container_mapping:
+        for container, value in container_mapping.items():
             # Check ansible version & configs
-            ansible_logs = self.get_container_logs("{}_{}_1".format(self.project_name, container))
+            ansible_logs = self.get_container_logs(f"{self.project_name}_{container}_1")
             self.check_ansible(ansible_logs)
             # Check values in log output
-            inventory_json = self.extract_json("{}_{}_1".format(self.project_name, container))
-            self.check_common_keys(inventory_json, container_mapping[container])
+            inventory_json = self.extract_json(f"{self.project_name}_{container}_1")
+            self.check_common_keys(inventory_json, value)
         # Check Splunkd on all the containers
         assert self.check_splunkd("admin", self.password)
         # Check connections
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         for container in containers:
             container_name = container["Names"][0].strip("/").split('_')[1]
             splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
             if container_name == "cm1":
-                status, content = self.handle_request_retry("GET", "https://localhost:{}/services/cluster/master/searchheads?output_mode=json".format(splunkd_port), 
-                    {"auth": ("admin", self.password), "verify": False})
+                status, content = self.handle_request_retry(
+                    "GET",
+                    f"https://localhost:{splunkd_port}/services/cluster/master/searchheads?output_mode=json",
+                    {"auth": ("admin", self.password), "verify": False},
+                )
                 assert status == 200
                 output = json.loads(content)
                 assert len(output["entry"]) == 2
@@ -347,26 +414,34 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
         # Get container logs
         container_mapping = {"so1": "so", "cm1": "cm"}
-        for container in container_mapping:
+        for container, value in container_mapping.items():
             # Check ansible version & configs
-            ansible_logs = self.get_container_logs("{}_{}_1".format(self.project_name, container))
+            ansible_logs = self.get_container_logs(f"{self.project_name}_{container}_1")
             self.check_ansible(ansible_logs)
             # Check values in log output
-            inventory_json = self.extract_json("{}_{}_1".format(self.project_name, container))
-            self.check_common_keys(inventory_json, container_mapping[container])
+            inventory_json = self.extract_json(f"{self.project_name}_{container}_1")
+            self.check_common_keys(inventory_json, value)
         # Check Splunkd on all the containers
         assert self.check_splunkd("admin", self.password)
         # Check connections
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         for container in containers:
             container_name = container["Names"][0].strip("/").split('_')[1]
             splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
             if container_name == "cm1":
-                status, content = self.handle_request_retry("GET", "https://localhost:{}/services/cluster/master/searchheads?output_mode=json".format(splunkd_port), 
-                                                            {"auth": ("admin", self.password), "verify": False})
+                status, content = self.handle_request_retry(
+                    "GET",
+                    f"https://localhost:{splunkd_port}/services/cluster/master/searchheads?output_mode=json",
+                    {"auth": ("admin", self.password), "verify": False},
+                )
                 assert status == 200
                 output = json.loads(content)
                 assert len(output["entry"]) == 1
@@ -396,7 +471,7 @@ class TestDockerSplunk(Executor):
             assert self.wait_for_containers(1, name=self.project_name)
             # Check splunkd
             splunkd_port = self.client.port(cid, 8089)[0]["HostPort"]
-            url = "https://localhost:{}/services/server/info".format(splunkd_port)
+            url = f"https://localhost:{splunkd_port}/services/server/info"
             kwargs = {"auth": ("admin", self.password), "verify": False}
             status, content = self.handle_request_retry("GET", url, kwargs)
             assert status == 200
@@ -404,8 +479,16 @@ class TestDockerSplunk(Executor):
             exec_command = self.client.exec_create(cid, "cat /opt/splunk/etc/system/local/server.conf", user="splunk")
             std_out = self.client.exec_start(exec_command)
             assert "cluster_label = keepsummersafe" in std_out
-            pass4SymmKey = re.search(r'\[clustering\].*?pass4SymmKey = (.*?)\n', std_out, flags=re.MULTILINE|re.DOTALL).group(1).strip()
-            exec_command = self.client.exec_create(cid, "/opt/splunk/bin/splunk show-decrypted --value '{}'".format(pass4SymmKey), user="splunk")
+            pass4SymmKey = re.search(
+                r'\[clustering\].*?pass4SymmKey = (.*?)\n',
+                std_out,
+                flags=re.MULTILINE | re.DOTALL,
+            )[1].strip()
+            exec_command = self.client.exec_create(
+                cid,
+                f"/opt/splunk/bin/splunk show-decrypted --value '{pass4SymmKey}'",
+                user="splunk",
+            )
             std_out = self.client.exec_start(exec_command)
             assert "keepsummerbeingliketotallystokedaboutlikethegeneralvibeandstuff" in std_out
         except Exception as e:
@@ -425,7 +508,9 @@ class TestDockerSplunk(Executor):
         output = self.get_container_logs(cid.get("Id"))
         self.client.remove_container(cid.get("Id"), v=True, force=True)
         # Get the password
-        password = re.search(r"^  password: (.*?)\n", output, flags=re.MULTILINE|re.DOTALL).group(1).strip()
+        password = re.search(
+            r"^  password: (.*?)\n", output, flags=re.MULTILINE | re.DOTALL
+        )[1].strip()
         assert password and password != "null"
         # Add a custom conf file
         output = re.sub(r'  smartstore: null', r'''  smartstore:
@@ -444,25 +529,31 @@ class TestDockerSplunk(Executor):
         # Create the container and mount the default.yml
         cid = None
         try:
-            cid = self.client.create_container(self.SPLUNK_IMAGE_NAME, tty=True, ports=[8089], 
-                                            volumes=["/tmp/defaults/default.yml"], name=self.project_name,
-                                            environment={
-                                                            "DEBUG": "true", 
-                                                            "SPLUNK_START_ARGS": "--accept-license",
-                                                            "SPLUNK_PASSWORD": self.password,
-                                                            "SPLUNK_ROLE": "splunk_cluster_master",
-                                                            "SPLUNK_INDEXER_URL": "idx1"
-                                                        },
-                                            host_config=self.client.create_host_config(binds=[self.DIR + "/default.yml:/tmp/defaults/default.yml"],
-                                                                                       port_bindings={8089: ("0.0.0.0",)})
-                                            )
+            cid = self.client.create_container(
+                self.SPLUNK_IMAGE_NAME,
+                tty=True,
+                ports=[8089],
+                volumes=["/tmp/defaults/default.yml"],
+                name=self.project_name,
+                environment={
+                    "DEBUG": "true",
+                    "SPLUNK_START_ARGS": "--accept-license",
+                    "SPLUNK_PASSWORD": self.password,
+                    "SPLUNK_ROLE": "splunk_cluster_master",
+                    "SPLUNK_INDEXER_URL": "idx1",
+                },
+                host_config=self.client.create_host_config(
+                    binds=[f"{self.DIR}/default.yml:/tmp/defaults/default.yml"],
+                    port_bindings={8089: ("0.0.0.0",)},
+                ),
+            )
             cid = cid.get("Id")
             self.client.start(cid)
             # Poll for the container to be ready
             assert self.wait_for_containers(1, name=self.project_name)
             # Check splunkd
             splunkd_port = self.client.port(cid, 8089)[0]["HostPort"]
-            url = "https://localhost:{}/services/server/info".format(splunkd_port)
+            url = f"https://localhost:{splunkd_port}/services/server/info"
             kwargs = {"auth": ("admin", self.password), "verify": False}
             status, content = self.handle_request_retry("GET", url, kwargs)
             assert status == 200
@@ -495,32 +586,40 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
         # Get container logs
         container_mapping = {"sh1": "sh", "cm1": "cm"}
-        for container in container_mapping:
+        for container, value in container_mapping.items():
             # Check ansible version & configs
-            ansible_logs = self.get_container_logs("{}_{}_1".format(self.project_name, container))
+            ansible_logs = self.get_container_logs(f"{self.project_name}_{container}_1")
             self.check_ansible(ansible_logs)
             # Check values in log output
-            inventory_json = self.extract_json("{}_{}_1".format(self.project_name, container))
-            self.check_common_keys(inventory_json, container_mapping[container])
+            inventory_json = self.extract_json(f"{self.project_name}_{container}_1")
+            self.check_common_keys(inventory_json, value)
         # Check Splunkd on all the containers
         assert self.check_splunkd("admin", self.password)
         # Check connections
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         for container in containers:
             container_name = container["Names"][0].strip("/").split('_')[1]
             splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
             if container_name == "cm1":
-                status, content = self.handle_request_retry("GET", "https://localhost:{}/services/cluster/master/searchheads?output_mode=json".format(splunkd_port), 
-                                                            {"auth": ("admin", self.password), "verify": False})
+                status, content = self.handle_request_retry(
+                    "GET",
+                    f"https://localhost:{splunkd_port}/services/cluster/master/searchheads?output_mode=json",
+                    {"auth": ("admin", self.password), "verify": False},
+                )
                 assert status == 200
                 output = json.loads(content)
                 # There's only 1 "standalone" search head connected and 1 cluster master
                 assert len(output["entry"]) == 2
                 for sh in output["entry"]:
-                    assert sh["content"]["label"] == "sh1" or sh["content"]["label"] == "cm1"
+                    assert sh["content"]["label"] in ["sh1", "cm1"]
                     assert sh["content"]["status"] == "Connected"
 
     def test_compose_1sh1cm1dmc(self):
@@ -530,8 +629,13 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         self.check_dmc(containers, 2, 0, 2, 1, 3)
 
     def test_compose_1sh2idx2hf1dmc(self):
@@ -541,8 +645,13 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         self.check_dmc(containers, 3, 2, 2, 0, 4)
 
     def test_compose_3idx1cm1dmc(self):
@@ -552,8 +661,14 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name), timeout=900)
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+            timeout=900,
+        )
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         self.check_dmc(containers, 4, 3, 2, 1, 5)
 
     def test_compose_1uf1so1dmc(self):
@@ -563,8 +678,13 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         self.check_dmc(containers, 1, 1, 1, 0, 2)
 
     def test_compose_1so1dmc(self):
@@ -574,8 +694,13 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         self.check_dmc(containers, 1, 1, 1, 0, 2)
 
     def test_compose_2idx2sh1dmc(self):
@@ -585,8 +710,13 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         self.check_dmc(containers, 4, 2, 3, 0, 5)
 
     def test_compose_2idx2sh(self):
@@ -596,16 +726,19 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name))
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+        )
         # Get container logs
         container_mapping = {"sh1": "sh", "sh2": "sh", "idx1": "idx", "idx2": "idx"}
-        for container in container_mapping:
+        for container, value in container_mapping.items():
             # Check ansible version & configs
-            ansible_logs = self.get_container_logs("{}_{}_1".format(self.project_name, container))
+            ansible_logs = self.get_container_logs(f"{self.project_name}_{container}_1")
             self.check_ansible(ansible_logs)
             # Check values in log output
-            inventory_json = self.extract_json("{}_{}_1".format(self.project_name, container))
-            self.check_common_keys(inventory_json, container_mapping[container])
+            inventory_json = self.extract_json(f"{self.project_name}_{container}_1")
+            self.check_common_keys(inventory_json, value)
             try:
                 assert inventory_json["splunk_indexer"]["hosts"] == ["idx1", "idx2"]
                 assert inventory_json["splunk_search_head"]["hosts"] == ["sh1", "sh2"]
@@ -616,12 +749,14 @@ class TestDockerSplunk(Executor):
         assert self.check_splunkd("admin", self.password)
         # Check connections
         idx_list = ["idx1", "idx2"]
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         for container in containers:
             c_name = container["Labels"]["com.docker.compose.service"]
             if "sh1" in c_name or "sh2" in c_name:
                 splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
-                url = "https://localhost:{}/services/search/distributed/peers?output_mode=json".format(splunkd_port)
+                url = f"https://localhost:{splunkd_port}/services/search/distributed/peers?output_mode=json"
                 kwargs = {"auth": ("admin", self.password), "verify": False}
                 status, content = self.handle_request_retry("GET", url, kwargs)
                 assert status == 200
@@ -630,7 +765,9 @@ class TestDockerSplunk(Executor):
                 assert len(peers) == 2 and set(peers) == set(idx_list)
         # Search results won't return the correct results immediately :(
         time.sleep(30)
-        search_providers, distinct_hosts = self.search_internal_distinct_hosts("{}_sh1_1".format(self.project_name), password=self.password)
+        search_providers, distinct_hosts = self.search_internal_distinct_hosts(
+            f"{self.project_name}_sh1_1", password=self.password
+        )
         assert len(search_providers) == 3
         assert "idx1" in search_providers and "idx2" in search_providers and "sh1" in search_providers
         assert distinct_hosts == 4
@@ -642,16 +779,20 @@ class TestDockerSplunk(Executor):
         container_count, rc = self.compose_up()
         assert rc == 0
         # Wait for containers to come up
-        assert self.wait_for_containers(container_count, label="com.docker.compose.project={}".format(self.project_name), timeout=600)
+        assert self.wait_for_containers(
+            container_count,
+            label=f"com.docker.compose.project={self.project_name}",
+            timeout=600,
+        )
         # Get container logs
         container_mapping = {"sh1": "sh", "sh2": "sh", "idx1": "idx", "idx2": "idx", "cm1": "cm"}
-        for container in container_mapping:
+        for container, value in container_mapping.items():
             # Check ansible version & configs
-            ansible_logs = self.get_container_logs("{}_{}_1".format(self.project_name, container))
+            ansible_logs = self.get_container_logs(f"{self.project_name}_{container}_1")
             self.check_ansible(ansible_logs)
             # Check values in log output
-            inventory_json = self.extract_json("{}_{}_1".format(self.project_name, container))
-            self.check_common_keys(inventory_json, container_mapping[container])
+            inventory_json = self.extract_json(f"{self.project_name}_{container}_1")
+            self.check_common_keys(inventory_json, value)
             try:
                 assert inventory_json["splunk_cluster_master"]["hosts"] == ["cm1"]
                 assert inventory_json["splunk_indexer"]["hosts"] == ["idx1", "idx2"]
@@ -665,44 +806,57 @@ class TestDockerSplunk(Executor):
         idx_list = ["idx1", "idx2"]
         sh_list = ["sh1", "sh2", "cm1"]
 
-        containers = self.client.containers(filters={"label": "com.docker.compose.project={}".format(self.project_name)})
+        containers = self.client.containers(
+            filters={"label": f"com.docker.compose.project={self.project_name}"}
+        )
         for container in containers:
             container_name = container["Names"][0].strip("/").split('_')[1]
             splunkd_port = self.client.port(container["Id"], 8089)[0]["HostPort"]
             if container_name == "cm1":
-                status, content = self.handle_request_retry("GET", "https://localhost:{}/services/cluster/master/searchheads?output_mode=json".format(splunkd_port), 
-                                                            {"auth": ("admin", self.password), "verify": False})
+                status, content = self.handle_request_retry(
+                    "GET",
+                    f"https://localhost:{splunkd_port}/services/cluster/master/searchheads?output_mode=json",
+                    {"auth": ("admin", self.password), "verify": False},
+                )
                 assert status == 200
                 output = json.loads(content)
                 for sh in output["entry"]:
                     if sh["content"]["label"] in sh_list and sh["content"]["status"] == "Connected":
                         sh_list.remove(sh["content"]["label"])
-                status, content = self.handle_request_retry("GET", "https://localhost:{}/services/cluster/master/peers?output_mode=json".format(splunkd_port), 
-                                                            {"auth": ("admin", self.password), "verify": False})
+                status, content = self.handle_request_retry(
+                    "GET",
+                    f"https://localhost:{splunkd_port}/services/cluster/master/peers?output_mode=json",
+                    {"auth": ("admin", self.password), "verify": False},
+                )
                 assert status == 200
                 output = json.loads(content)
                 for idx in output["entry"]:
                     if idx["content"]["label"] in idx_list and idx["content"]["status"] == "Up":
                         idx_list.remove(idx["content"]["label"])
-                assert len(idx_list) == 0 and len(sh_list) == 0
+                assert not idx_list and not sh_list
                 # Add one more indexer
                 self.compose_file_name = "2idx2sh1cm_idx3.yaml"
                 _, rc = self.compose_up()
                 assert rc == 0
                 # Wait for containers to come up
-                assert self.wait_for_containers(container_count+1, label="com.docker.compose.project={}".format(self.project_name), timeout=600)
+                assert self.wait_for_containers(
+                    container_count + 1,
+                    label=f"com.docker.compose.project={self.project_name}",
+                    timeout=600,
+                )
 
                 retries = 10
                 for n in range(retries):
                     try:
-                        status, content = self.handle_request_retry("GET", "https://localhost:{}/services/cluster/master/peers?output_mode=json".format(splunkd_port), 
-                                                        {"auth": ("admin", self.password), "verify": False})
+                        status, content = self.handle_request_retry(
+                            "GET",
+                            f"https://localhost:{splunkd_port}/services/cluster/master/peers?output_mode=json",
+                            {"auth": ("admin", self.password), "verify": False},
+                        )
                         assert status == 200
                         output = json.loads(content)
                         assert len(output["entry"]) == 3
-                        indexers = []
-                        for idx in output["entry"]:
-                            indexers.append(idx["content"]["label"])
+                        indexers = [idx["content"]["label"] for idx in output["entry"]]
                         assert "idx1" in indexers
                         assert "idx2" in indexers
                         assert "idx3" in indexers
