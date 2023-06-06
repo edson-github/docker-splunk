@@ -33,13 +33,13 @@ splunk_shc_pass4SymmKey = os.environ.get("SPLUNK_SHC_PASS4SYMMKEY", None)
 def random_generator(size=24):
     # Use System Random for
     rng = random.SystemRandom()
-    b = [chr(rng.randrange(256)) for i in range(size)]
+    b = [chr(rng.randrange(256)) for _ in range(size)]
     s = ''.join(b)
-    if six.PY2:
-        s = base64.b64encode(s)
-    else:
-        s = base64.b64encode(s.encode()).decode()
-    return s
+    return (
+        base64.b64encode(s)
+        if six.PY2
+        else base64.b64encode(s.encode()).decode()
+    )
 
 
 # if there are no environment vars set, lets make some safe defaults

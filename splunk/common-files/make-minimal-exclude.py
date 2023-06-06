@@ -35,8 +35,8 @@ major_version = None
 minor_version = None
 
 if version_string:
-    major_version = version_string.group(1)
-    minor_version = version_string.group(2)
+    major_version = version_string[1]
+    minor_version = version_string[2]
 
 if major_version:
     print(EXCLUDE_V7)

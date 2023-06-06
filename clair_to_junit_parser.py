@@ -46,7 +46,7 @@ def main():
         new_step.log = clair_parsed_error_file
         new_step.category = "SetupError"
         new_step.failure_type = "unapproved"
-        new_step.failure_message = "Please have the following security issue reviewed by Splunk: {}".format(vuln["link"])
+        new_step.failure_message = f'Please have the following security issue reviewed by Splunk: {vuln["link"]}'
         new_step.failure_output = clair_parsed_error_file
         current_suite.test_cases.append(new_step)
         test_suites.append(current_suite)
@@ -60,7 +60,7 @@ def main():
         new_step.log = vuln
         new_step.category = vuln["severity"]
         new_step.failure_type = "unapproved"
-        new_step.failure_message = "Please have the following security issue reviewed by Splunk: {}".format(vuln["link"])
+        new_step.failure_message = f'Please have the following security issue reviewed by Splunk: {vuln["link"]}'
         new_step.failure_output = vuln["description"]
         current_suite.test_cases.append(new_step)
     # try to write new file
